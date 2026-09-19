@@ -1,7 +1,14 @@
 # models/01_baseline_cnn.py
 
+import sys, os
+sys.path.append(os.path.abspath("."))
+
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from tensorflow.keras.callbacks import EarlyStopping
+
+from src.data_prep import load_and_preprocess_data, CLASS_NAMES
+from src.evaluate import evaluate_model, plot_training_curves
 
 
 def build_baseline_cnn(num_classes=10):
@@ -85,9 +92,43 @@ def build_baseline_cnn(num_classes=10):
     return model
 
 
-if __name__ == "__main__":
-    # Quick standalone check: build the model and print its summary,
-    # so we can visually confirm the layer shapes and parameter counts
-    # before writing any training code that depends on this function.
+def main():
+    os.makedirs("models", exist_ok=True)
+    os.makedirs("reports/figures", exist_ok=True)
+
+    X_train, y_train, X_test, y_test = load_and_preprocess_data()
+
     model = build_baseline_cnn()
     model.summary()
+
+    model.compile(
+        optimizer="adam",
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    early_stop = EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True, verbose=1)
+
+    history = model.fit(
+        X_train, y_train,
+        validation_split=0.1,
+        batch_size=32,
+        epochs=15,
+        callbacks=[early_stop],
+        verbose=1,
+    )
+
+    plot_training_curves(history, "(Baseline CNN)", save_path="reports/figures/baseline_curves.png")
+
+    # Step 6: Evaluate honestly on the TEST set -- this line was
+    # missing before, which is why no test results printed.
+    evaluate_model(model, X_test, y_test, CLASS_NAMES, save_path="reports/figures/baseline_confusion.png")
+
+    model.save("models/baseline_cnn.keras")
+    print("Saved model to models/baseline_cnn.keras")
+
+
+if __name__ == "__main__":
+    main()
+
+    
