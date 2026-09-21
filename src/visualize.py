@@ -1,5 +1,6 @@
 # src/visualize.py
 
+import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -86,3 +87,81 @@ def visualize_filters(model, layer_name, save_path=None):
         plt.savefig(save_path)
         print(f"Saved filter visualization to {save_path}")
     plt.show()
+    
+
+# Add this to src/visualize.py (alongside get_conv_layer_names and visualize_filters)
+
+def visualize_feature_maps(model, image, conv_layer_names, save_path=None):
+    """
+    Feeds a single image through the model and displays the feature maps
+    (intermediate activations) produced at each named Conv2D layer, along
+    with a printed explanation of what that layer's position in the
+    network implies about what it's likely detecting.
+    """
+    layer_outputs = [model.get_layer(name).output for name in conv_layer_names]
+    activation_model = tf.keras.Model(inputs=model.inputs, outputs=layer_outputs)
+
+    image_batch = np.expand_dims(image, axis=0)
+    activations = activation_model.predict(image_batch, verbose=0)
+
+    plt.figure(figsize=(3, 3))
+    plt.imshow(image[:, :, 0], cmap="gray")
+    plt.title("Original input image")
+    plt.axis("off")
+    plt.show()
+
+    # Short, position-based explanations -- first layer sees the raw
+    # image directly, the last layer is the most removed from it, and
+    # anything in between is transitioning from concrete to abstract.
+    num_layers = len(conv_layer_names)
+
+    for idx, (layer_name, activation) in enumerate(zip(conv_layer_names, activations)):
+        num_filters = activation.shape[-1]
+
+        # Compute how many of this layer's feature maps are nearly
+        # inactive for THIS specific image -- a genuinely useful,
+        # image-specific observation rather than generic boilerplate.
+        # We call a feature map "inactive" if its highest activation
+        # value is very close to zero (ReLU outputs are always >= 0,
+        # so near-zero means the filter barely fired at all).
+        max_per_filter = activation[0].max(axis=(0, 1))
+        inactive_count = int(np.sum(max_per_filter < 0.05))
+
+        # Print a plain-language explanation based on this layer's
+        # depth in the network.
+        print(f"\n--- {layer_name} ({num_filters} filters) ---")
+        if idx == 0:
+            print("This is the FIRST conv layer -- it sees the raw image directly.")
+            print("Expect these feature maps to still resemble the original shape,")
+            print("since each filter is just responding to simple patterns like edges.")
+        elif idx == num_layers - 1:
+            print("This is the DEEPEST conv layer -- it never sees the raw image,")
+            print("only combinations of the previous layer's feature maps.")
+            print("Expect these to look abstract and hard to describe visually.")
+        else:
+            print("This is a MIDDLE conv layer -- it combines the previous layer's")
+            print("simple patterns into more complex, but still developing, shapes.")
+
+        print(f"{inactive_count}/{num_filters} filters barely activated for this image "
+              f"(may be specialized for patterns this image doesn't contain).")
+
+        num_cols = min(8, num_filters)
+        num_rows = int(np.ceil(num_filters / num_cols))
+
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 1.5, num_rows * 1.5))
+        axes = np.array(axes).reshape(num_rows, num_cols)
+
+        for i in range(num_rows * num_cols):
+            ax = axes[i // num_cols, i % num_cols]
+            if i < num_filters:
+                ax.imshow(activation[0, :, :, i], cmap="viridis")
+                ax.set_title(f"filter {i}", fontsize=7)
+            ax.axis("off")
+
+        plt.suptitle(f"Feature maps -- {layer_name} ({num_filters} filters)")
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(f"{save_path}_{layer_name}.png")
+            print(f"Saved feature maps to {save_path}_{layer_name}.png")
+        plt.show()
