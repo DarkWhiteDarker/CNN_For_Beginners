@@ -165,3 +165,95 @@ def visualize_feature_maps(model, image, conv_layer_names, save_path=None):
             fig.savefig(f"{save_path}_{layer_name}.png")
             print(f"Saved feature maps to {save_path}_{layer_name}.png")
         plt.show()
+        
+        
+
+def generate_grad_cam(model, image, last_conv_layer_name, pred_index=None):
+    """
+    Generates a Grad-CAM heatmap showing which regions of the input image
+    most influenced the model's prediction.
+
+    Note: rather than relying on the loaded model's own .inputs/.output
+    attributes (which can be unreliable for a Sequential model reloaded
+    from a .keras file in Keras 3 -- a known quirk, not something wrong
+    with your code), we rebuild the model's layer connections ourselves
+    using the Functional API. This re-wires the SAME trained layers
+    (same weights, nothing retrained) into a fresh, guaranteed-connected
+    graph, so we can safely access any intermediate layer's output.
+    """
+    # Create a brand new input tensor matching the model's expected shape.
+    new_input = tf.keras.Input(shape=(28, 28, 1))
+
+    # Manually pass this input through every one of the model's existing
+    # layers, in order -- reusing the same trained layer objects (and
+    # therefore the same learned weights), just re-establishing fresh
+    # connections between them.
+    x = new_input
+    layer_outputs_by_name = {}
+    for layer in model.layers:
+        x = layer(x)
+        layer_outputs_by_name[layer.name] = x
+
+    final_output = x  # the last layer's output is the model's prediction
+
+    # Now this works reliably, since every layer was JUST connected
+    # above, in this same function call.
+    grad_model = tf.keras.Model(
+        inputs=new_input,
+        outputs=[layer_outputs_by_name[last_conv_layer_name], final_output]
+    )
+
+    image_batch = np.expand_dims(image, axis=0)
+
+    with tf.GradientTape() as tape:
+        conv_output, predictions = grad_model(image_batch)
+
+        if pred_index is None:
+            pred_index = tf.argmax(predictions[0])
+
+        class_channel = predictions[:, pred_index]
+
+    grads = tape.gradient(class_channel, conv_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+    conv_output = conv_output[0]
+    heatmap = conv_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+
+    heatmap = tf.maximum(heatmap, 0)
+    heatmap = heatmap / (tf.math.reduce_max(heatmap) + 1e-8)
+
+    return heatmap.numpy(), int(pred_index)
+
+
+def display_grad_cam(image, heatmap, class_names, true_label, save_path=None):
+    """
+    Displays the original image, the raw heatmap, and an overlay of the
+    two side by side.
+    """
+    import matplotlib.cm as cm
+
+    # Resize the small heatmap (7x7) up to the original image size (28x28)
+    # using simple image resizing so it can be overlaid pixel-for-pixel.
+    heatmap_resized = tf.image.resize(heatmap[..., tf.newaxis], (28, 28)).numpy().squeeze()
+
+    fig, axes = plt.subplots(1, 3, figsize=(9, 3))
+
+    axes[0].imshow(image[:, :, 0], cmap="gray")
+    axes[0].set_title(f"Original\n(True: {class_names[true_label]})")
+    axes[0].axis("off")
+
+    axes[1].imshow(heatmap_resized, cmap="jet")
+    axes[1].set_title("Grad-CAM heatmap")
+    axes[1].axis("off")
+
+    axes[2].imshow(image[:, :, 0], cmap="gray")
+    axes[2].imshow(heatmap_resized, cmap="jet", alpha=0.5)
+    axes[2].set_title("Overlay")
+    axes[2].axis("off")
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Saved Grad-CAM visualization to {save_path}")
+    plt.show()
