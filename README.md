@@ -14,6 +14,7 @@ Every design choice in this project is driven by **"does this make the network e
 - `GlobalAveragePooling2D` instead of `Flatten`, specifically because it's the architecture that makes Grad-CAM (Step 8) work cleanly
 
 ---
+## Project Structure
 
 ```
 cnn-interpretability-project/
